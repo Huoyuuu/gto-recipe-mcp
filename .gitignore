@@ -1,0 +1,7 @@
+.venv/
+.cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+exporter/build/
+exporter/dist/
