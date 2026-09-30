@@ -1,6 +1,6 @@
 # gto-recipe-mcp
 
-GregTech Odyssey 的只读配方查询 MCP，可以查谁产 X、谁吃 X、这条配方在哪台机器上跑、跑 N 次的净进出是多少。数据来自游戏运行时导出，包含材料分解、矿石处理这类自动生成的配方。
+GregTech Odyssey 的只读配方查询 MCP，可以查谁产 X、谁吃 X、这条配方在哪台机器上跑、跑 N 次的净进出是多少，还能按进料自动配平整条产线。数据来自游戏运行时导出，包含材料分解、矿石处理这类自动生成的配方。
 
 > **内置数据为普通难度（Normal）。** 难度会改写配方和数值。简单或专家难度的玩家，需要在自己的实例里运行一次 `exporter/run_export.py`（见「更新数据」）。导出器会按该实例 `config/gtocore.yaml` 中的难度重新导出，并记录到 `data/runtime/meta.json`。
 
@@ -14,7 +14,7 @@ GregTech Odyssey 的只读配方查询 MCP，可以查谁产 X、谁吃 X、这�
 | 整合包 | GregTech Odyssey 0.5.6-beta · **普通难度（Normal）** |
 | 模组 | gtocore 0.5.6-beta · GTCEu 26.7.3 (GTO fork) · GTOLib 26.7.4 |
 | 游戏 | Minecraft 1.20.1 · Forge 47.4.20 |
-| 内容 | 51714 条配方 / 183 类 · 1055 台机器 · 1900 种材料 |
+| 内容 | 51714 条配方 / 183 类 · 2321 台机器与部件 · 1900 种材料 |
 
 ## 快速开始
 
@@ -63,7 +63,7 @@ uv run python exporter/run_export.py --instance "<实例目录>"
 ## 已知限制
 
 - 概率 boost 按 GTCEu 默认公式计算，未核实 GTO 是否改写。
-- 并行和超频由 GTOLib native 代码处理，这里没有计入。
+- 超频按 GTCEu 标准公式计算（`plan` / `balance_v`）。GTOLib 的专有并行没有复现，需要时在步骤里传 `parallel`。
 - 210 台 GTO 多方块的仓室信息来自静态源码。
 
 MIT License
