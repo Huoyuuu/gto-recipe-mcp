@@ -16,7 +16,7 @@ _ROOT = Path(__file__).resolve().parents[1]   # standalone repo keeps data/ next
 DATA = Path(os.environ.get("GTO_DATA_DIR") or (_ROOT / "data" if (_ROOT / "data").is_dir() else _ROOT.parents[1] / "analysis" / "data"))
 RT = DATA / "runtime"
 CACHE = Path(__file__).resolve().parents[1] / ".cache"
-FILES = {"runtime": [RT / f for f in ("recipes.jsonl.gz", "machines.json", "materials.json", "lang_zh.json", "meta.json")],
+FILES = {"runtime": [RT / f for f in ("recipes.jsonl.gz", "machines.json", "materials.json", "lang_zh.json", "meta.json")] + [DATA / "material_aliases.json"],
          "static": [DATA / "recipe_index.json", DATA / "machine_index.json"]}
 TIERS = "ULV LV MV HV EV IV LuV ZPM UV UHV UEV UIV UXV OpV MAX".split()
 
@@ -86,13 +86,19 @@ def _build_runtime(con):
         _alias(names, zh, k, 0)
         _alias(names, k, k, 0)
         _alias(names, k.split(":")[-1], k, 0)
+    fa = DATA / "material_aliases.json"             # Java field name -> registry name (TerbiumNitratePowder -> terbium_nitrate)
+    field_alias = json.loads(fa.read_text(encoding="utf-8")) if fa.exists() else {}
+    inv = {}
+    for f, n in field_alias.items():
+        inv.setdefault(n, []).append(f)
     for m in json.loads((RT / "materials.json").read_text(encoding="utf-8")):
         dust = m["forms"].get("dust")
-        for p, item in m["forms"].items():
-            _alias(names, f"{p}:{m['name']}", "item:" + item, 0)
-        if m.get("fluid"):
-            _alias(names, f"fluid:{m['name']}", "fluid:" + m["fluid"], 0)
-        for n in (m["name"], m.get("zh") or m["name"]):          # bare material name -> dust and/or fluid
+        for nm in [m["name"]] + inv.get(m["name"], []):
+            for p, item in m["forms"].items():
+                _alias(names, f"{p}:{nm}", "item:" + item, 0)
+            if m.get("fluid"):
+                _alias(names, f"fluid:{nm}", "fluid:" + m["fluid"], 0)
+        for n in [m["name"], m.get("zh") or m["name"]] + inv.get(m["name"], []):   # bare material name -> dust and/or fluid
             if dust: _alias(names, n, "item:" + dust, 1)
             if m.get("fluid"): _alias(names, n, "fluid:" + m["fluid"], 1)
         con.execute("INSERT OR REPLACE INTO materials VALUES(?,?,?)", (m["name"], m.get("zh"), json.dumps(m, ensure_ascii=False)))
@@ -100,15 +106,24 @@ def _build_runtime(con):
     if (DATA / "machine_index.json").exists():
         static_m = {m["id"]: m for m in json.loads((DATA / "machine_index.json").read_text(encoding="utf-8"))}
     ms = json.loads((RT / "machines.json").read_text(encoding="utf-8"))
+    zh2t = {zh: "gtceu:" + k[5:] for k, zh in labels.items() if k.startswith("type:")}
     for m in ms["machines"]:
         s = static_m.get(m["id"].split(":")[-1], {})
         m.update({"cls": s.get("cls"), "par": s.get("par", []), "abil_static": s.get("abil", [])})
-        types = [tpath(t) for t in m["recipe_types"]]
+        # tooltip '- 配方类型 : 大型化学反应釜, 化学反应釜' also lists types the export didn't attach (chemical_plant)
+        for t in m.get("tooltips_zh", []):
+            if "配方类型" in t:
+                for zh in re.split(r"[,，、]", re.split(r"[:：]", t, 1)[-1]):
+                    rt = zh2t.get(zh.strip())
+                    if rt and rt not in m["recipe_types"]:
+                        m["recipe_types"].append(rt)
+        types = list(dict.fromkeys(tpath(t) for t in m["recipe_types"]))
         con.execute("INSERT OR REPLACE INTO machines VALUES(?,?,?,?,?,?)",
                     (m["id"], m["zh"], m["multiblock"], m["tier"], len(types), json.dumps(m, ensure_ascii=False)))
         con.executemany("INSERT INTO mtypes VALUES(?,?)", [(m["id"], t) for t in types])
     meta = json.loads((RT / "meta.json").read_text(encoding="utf-8"))
-    return recipes, io, names, labels, {"meta": meta, "me_parts": ms["me_parts"]}
+    return recipes, io, names, labels, {"meta": meta, "me_parts": ms["me_parts"],
+                                        "field_alias": {f.lower(): n for f, n in field_alias.items()}}
 
 
 def _build_static(con):
@@ -150,8 +165,7 @@ def _build_static(con):
 
 
 def build(source, path):
-    tmp = path.with_suffix(".tmp")
-    tmp.unlink(missing_ok=True)
+    tmp = path.with_suffix(f".{os.getpid()}.tmp")
     con = sqlite3.connect(tmp)
     con.executescript(SCHEMA)
     recipes, io, names, labels, kv = (_build_runtime if source == "runtime" else _build_static)(con)
@@ -163,7 +177,16 @@ def build(source, path):
     con.executescript(INDEXES)
     con.commit()
     con.close()
-    os.replace(tmp, path)
+    try:
+        os.replace(tmp, path)
+    except PermissionError:          # another process just published the same fingerprint
+        tmp.unlink(missing_ok=True)
+    for old in CACHE.glob(f"gto-{source}*.sqlite"):   # best effort: drop stale fingerprints no process holds
+        if old != path:
+            try:
+                old.unlink()
+            except OSError:
+                pass
 
 
 class DB:
@@ -171,9 +194,10 @@ class DB:
         source = source or os.environ.get("GTO_MCP_SOURCE") or ("runtime" if FILES["runtime"][0].exists() else "static")
         self.source = source
         CACHE.mkdir(exist_ok=True)
-        path = CACHE / f"gto-{source}.sqlite"
-        newest = max(p.stat().st_mtime for p in FILES[source] if p.exists())
-        if not path.exists() or path.stat().st_mtime < newest:
+        # file name carries a source-mtime fingerprint: a running MCP can keep the old file open (Windows locks it)
+        stamp = int(max(p.stat().st_mtime for p in FILES[source] + [Path(__file__)] if p.exists()))   # code change -> rebuild too
+        path = CACHE / f"gto-{source}-{stamp}.sqlite"
+        if not path.exists():
             build(source, path)
         self.con = sqlite3.connect(path, check_same_thread=False)
         self.con.row_factory = sqlite3.Row

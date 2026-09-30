@@ -279,7 +279,6 @@ public final class GtoRecipeExporter {
                     meParts.add(p);
                 }
                 GTRecipeType[] types = def.getRecipeTypes();
-                if (!multi && (types == null || types.length == 0)) continue;
                 JsonObject o = new JsonObject();
                 o.addProperty("id", id);
                 o.addProperty("zh", zh);

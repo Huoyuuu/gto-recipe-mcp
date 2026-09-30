@@ -37,9 +37,19 @@ uv sync && uv run pytest -q
 
 ## 工具
 
-`search` `recipe` `producers` `consumers` `machines_for` `machine` `material` `trace` `balance` `me_parts`
+`search` `recipe` `producers` `consumers` `machines_for` `machine` `material` `trace` `balance` `me_parts`，v2 新增 `plan`（自动配平产线）和 `balance_v`（按电压超频）。
 
-物品可以用 registry id、`dust:Bastnasite`、中文名或模糊词来指定。每次返回约 4 KB，超出部分用 `offset` 翻页。
+物品可以用 registry id、`dust:Bastnasite`、Java 字段名（`dust:TerbiumNitratePowder`）、中文名或模糊词来指定。每次返回约 4 KB，超出部分用 `offset` 翻页。`producers` 和 `trace` 默认隐藏打包、宇宙模拟这类噪音配方，传 `include_all=True` 可以显示。
+
+```python
+# plan：给进料速率和步骤，算出每步 runs/s、所需台数和净缺口；make 步骤按缺口补料
+plan({"dust:Bastnasite": 1}, ["fluoro_carbon_lanthanide_cerium_solution47",
+     {"id": "hydrofluoric_acid_from_elements", "mode": "make"}], voltage="IV")
+
+# 在 Python 里直接调用：uv run python
+from gto_mcp import server as s
+print(s.consumers("萤石粉")); print(s.D().resolve("硝酸"))
+```
 
 ## 更新数据
 
